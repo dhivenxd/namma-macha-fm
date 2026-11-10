@@ -1,69 +1,129 @@
+import Link from "next/link";
 import Image from "next/image";
+import LatestShowPlayer from "./components/latest-show-player";
+import styles from "./landing.module.css";
+
+const broadcastLinks = [
+  {
+    number: "01",
+    label: "THE CITY",
+    description: "Where ‘10 minutes away’ is a legally protected fiction.",
+  },
+  {
+    number: "02",
+    label: "THE HOST",
+    description: "RJ Macha: professionally unqualified, spiritually on air.",
+  },
+  {
+    number: "03",
+    label: "THE FREQUENCY",
+    description: "Bengaluru’s civic chaos, remixed for the commute.",
+  },
+];
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className={styles.page} id="top">
+      <header className={styles.header}>
+        <Link aria-label="Namma Macha FM home" className={styles.brand} href="/">
+          <Image
+            alt=""
+            className={styles.brandAvatar}
+            height={54}
+            priority
+            src="/images/rj-macha.png"
+            width={54}
+          />
+          <span className={styles.brandText}>
+            <span className={styles.brandName}>Namma Macha</span>
+            <span className={styles.brandDetail}>FM 98.6 · Bengaluru</span>
+          </span>
+        </Link>
+
+        <p className={styles.onAir}><span aria-hidden="true" /> City&apos;s unpaid therapist</p>
+
+        <nav aria-label="Main navigation" className={styles.nav}>
+          <a href="#sound">The sound of the city</a>
+          <a href="#latest">Latest show</a>
+          <Link href="/broadcast">Script a show</Link>
+          <Link className={styles.navCta} href="/listen">Listening room <span aria-hidden="true">↗</span></Link>
+        </nav>
+      </header>
+
+      <section aria-labelledby="hero-title" className={styles.hero}>
+        <div className={styles.heroCopy}>
+          <p className={styles.kicker}>Civic chaos <span aria-hidden="true">·</span> now in stereo</p>
+          <h1 id="hero-title">City&apos;s a mess. <span className={styles.heroAccent}>Macha&apos;s on mic.</span></h1>
+          <p className={styles.heroDescription}>
+            Bengaluru&apos;s breaking news, dark punchlines, and group-chat energy for your commute.
           </p>
+          <div className={styles.heroActions}>
+            <a className={styles.primaryAction} href="#latest">Play the latest meltdown</a>
+          </div>
+          <p className={styles.frequencyNote}>98.6 FM <span aria-hidden="true">·</span> customer care for civic crisis</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div aria-label="A spinning vinyl record tuned to Namma Macha FM 98.6, with RJ Macha on air" className={styles.tuner} role="img">
+          <div className={styles.tunerTopline}>
+            <span className={styles.liveDot} /> NO ADULTS ON DUTY <span aria-hidden="true">·</span> 98.6 FM
+          </div>
+          <div aria-hidden="true" className={styles.waveBars}>
+            {Array.from({ length: 18 }, (_, index) => <span key={`wave-${index}`} />)}
+          </div>
+          <div aria-hidden="true" className={styles.record}>
+            <div className={styles.recordGrooves} />
+            <div className={styles.recordLabel}>
+              <span>98.6</span>
+              <small>SIDE A</small>
+            </div>
+          </div>
+          <div aria-hidden="true" className={styles.mascotSticker}>
+            <Image alt="" className={styles.mascotImage} height={148} src="/images/rj-macha.png" width={148} />
+            <span className={styles.mascotCaption}>RJ MACHA<br />LIVE FROM THE GROUP CHAT</span>
+          </div>
+          <span aria-hidden="true" className={styles.tunerSticker}>100% local<br />0% qualified</span>
+          <p aria-hidden="true" className={styles.tunerSignoff}>Bengaluru&apos;s civic breakdown, remixed.</p>
         </div>
-      </main>
-    </div>
+      </section>
+
+      <section aria-labelledby="latest-title" className={styles.latest} id="latest">
+        <div className={styles.latestIntro}>
+          <p className={styles.kicker}>Fresh off the frequency</p>
+          <h2 id="latest-title">The city&apos;s latest crash-out.</h2>
+          <p>One continuous listen. Zero tab switching. Full-length municipal coping.</p>
+        </div>
+        <LatestShowPlayer />
+      </section>
+
+      <section aria-labelledby="sound-title" className={styles.sound} id="sound">
+        <div className={styles.soundHeading}>
+          <p className={styles.kicker}>Our very serious nonsense</p>
+          <h2 id="sound-title">Civic chaos. Locally sourced.</h2>
+        </div>
+        <div className={styles.soundColumns}>
+          {broadcastLinks.map((item) => (
+            <article className={styles.soundItem} key={item.number}>
+              <span className={styles.soundNumber}>{item.number}</span>
+              <div>
+                <h3>{item.label}</h3>
+                <p>{item.description}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <footer className={styles.footer}>
+        <Link aria-label="Namma Macha FM home" className={styles.footerBrand} href="/">
+          <Image alt="" className={styles.footerAvatar} height={38} src="/images/rj-macha.png" width={38} />
+          <span className={styles.footerBrandText}>
+            <span>Namma Macha FM</span>
+            <span>Bengaluru, 98.6</span>
+          </span>
+        </Link>
+        <p>Bengaluru, sorted by absolutely no one.</p>
+        <a className={styles.footerCta} href="#latest">Play the latest show <span aria-hidden="true">↗</span></a>
+      </footer>
+    </main>
   );
 }
