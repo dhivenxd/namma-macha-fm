@@ -59,7 +59,7 @@ export default function Home() {
     const requestId = requestIdRef.current ?? crypto.randomUUID();
     requestIdRef.current = requestId;
     setError("");
-    setStatus("Starting Gemini in the background. The request is temporarily stored and will be deleted when finished…");
+    setStatus("Starting Gemini in the background. Checking for your script…");
     setScript("");
     setAudioTracks([]);
     setAudioTrackIndex(0);
@@ -79,13 +79,16 @@ export default function Home() {
 
       const startPayload: unknown = await response.json();
       if (!isJsonRecord(startPayload) || typeof startPayload.jobId !== "string") {
+        requestIdRef.current = null;
         throw new Error("Gemini did not return a script job ID. Please try again.");
       }
 
-      const jobUrl = `/api/script?jobId=${encodeURIComponent(startPayload.jobId)}`;
+      const jobId = startPayload.jobId;
+      requestIdRef.current = jobId;
+      const jobUrl = `/api/script?jobId=${encodeURIComponent(jobId)}`;
       const deadline = Date.now() + SCRIPT_WAIT_LIMIT_MS;
       let payload: unknown;
-      let pollConnectionFailures = 0;
+      let pollFailures = 0;
 
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, SCRIPT_STATUS_POLL_MS));
@@ -93,31 +96,45 @@ export default function Home() {
         let jobResponse: Response;
         try {
           jobResponse = await fetch(jobUrl, { cache: "no-store" });
-          pollConnectionFailures = 0;
         } catch {
-          pollConnectionFailures += 1;
-          if (pollConnectionFailures > 3) {
-            throw new Error("The connection to the local app was interrupted while checking Gemini. Press Generate script again to resume this same request.");
+          pollFailures += 1;
+          if (pollFailures > 3) {
+            throw new Error("The connection to the app was interrupted while checking Gemini. Press Generate script again to resume this same request.");
           }
           setStatus("Gemini is still working; reconnecting to check the same job…");
           continue;
         }
 
         if (jobResponse.status === 202) {
+          pollFailures = 0;
           setStatus("Gemini is still drafting your script…");
           continue;
         }
         if (!jobResponse.ok) {
-          requestIdRef.current = null;
+          const responsePayload: unknown = await jobResponse.clone().json().catch(() => null);
+          if (isJsonRecord(responsePayload) && responsePayload.retryable === true) {
+            pollFailures += 1;
+            if (pollFailures <= 3) {
+              setStatus("Gemini’s status check briefly failed; reconnecting to the same draft…");
+              continue;
+            }
+          }
+          if (isJsonRecord(responsePayload) && responsePayload.terminal === true) {
+            requestIdRef.current = null;
+            void fetch(jobUrl, { method: "DELETE" }).catch(() => undefined);
+          }
           throw new Error(await getErrorMessage(jobResponse));
         }
 
+        pollFailures = 0;
         payload = await jobResponse.json();
         break;
       }
 
       if (!payload) {
-        throw new Error("Gemini is still working. Press Generate script again to check the same request.");
+        await fetch(`${jobUrl}&cancel=true`, { method: "DELETE" }).catch(() => undefined);
+        requestIdRef.current = null;
+        throw new Error("Gemini took too long to finish. The interaction was stopped; please try again.");
       }
       if (!isJsonRecord(payload) || typeof payload.script !== "string") {
         requestIdRef.current = null;
@@ -126,8 +143,19 @@ export default function Home() {
 
       setScript(payload.script);
       requestIdRef.current = null;
-      if (typeof payload.cleanupWarning === "string") {
-        setError(payload.cleanupWarning);
+      try {
+        const cleanupResponse = await fetch(jobUrl, { method: "DELETE" });
+        const cleanupPayload: unknown = await cleanupResponse.json().catch(() => null);
+        if (
+          isJsonRecord(cleanupPayload) &&
+          typeof cleanupPayload.cleanupWarning === "string"
+        ) {
+          setError(cleanupPayload.cleanupWarning);
+        } else if (!cleanupResponse.ok) {
+          setError("Script ready. Gemini could not confirm removal of its temporary interaction.");
+        }
+      } catch {
+        setError("Script ready. Gemini could not confirm removal of its temporary interaction.");
       }
       setStatus("Script ready. Review or edit it, then generate the full broadcast audio when you’re ready.");
     } catch (requestError) {

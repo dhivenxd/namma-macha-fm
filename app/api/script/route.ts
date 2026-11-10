@@ -1,5 +1,4 @@
 import { GoogleGenAI } from "@google/genai";
-import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 
 const MAX_STORY_LENGTH = 6_000;
@@ -7,45 +6,12 @@ const MAX_HEADLINE_LENGTH = 300;
 const MAX_ARTICLE_URL_LENGTH = 2_048;
 const MODEL = "gemini-3.5-flash-lite";
 const QUESTION_CLIP_MARKER = "[[QUESTION_CLIP]]";
-const POLL_INTERVAL_MS = 5_000;
-const MAX_INTERACTION_WAIT_MS = 10 * 60_000;
-const MAX_POLL_CONNECTION_RETRIES = 2;
-const JOB_RESULT_TTL_MS = 15 * 60_000;
-const JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const INTERACTION_ID_PATTERN = /^v1_[A-Za-z0-9_.+\/=\-]{12,256}$/;
+
+export const maxDuration = 60;
 
 type JsonRecord = Record<string, unknown>;
-
-type ScriptJob =
-  | { status: "in_progress"; createdAt: number }
-  | {
-      status: "completed";
-      script: string;
-      sourceUrl: string | null;
-      cleanupWarning?: string;
-      createdAt: number;
-    }
-  | {
-      status: "failed";
-      error: string;
-      statusCode: number;
-      cleanupWarning?: string;
-      createdAt: number;
-    };
-
-type ScriptJobStore = {
-  jobs: Map<string, ScriptJob>;
-  requestIds: Map<string, string>;
-};
-
-const globalForScriptJobs = globalThis as typeof globalThis & {
-  __deluluFmScriptJobs?: ScriptJobStore;
-};
-const scriptJobStore =
-  globalForScriptJobs.__deluluFmScriptJobs ??
-  (globalForScriptJobs.__deluluFmScriptJobs = {
-    jobs: new Map<string, ScriptJob>(),
-    requestIds: new Map<string, string>(),
-  });
 
 function isJsonRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -110,16 +76,6 @@ function getTransportCode(error: unknown) {
   return undefined;
 }
 
-function scheduleJobCleanup(jobId: string, requestId: string) {
-  const timer = setTimeout(() => {
-    scriptJobStore.jobs.delete(jobId);
-    if (scriptJobStore.requestIds.get(requestId) === jobId) {
-      scriptJobStore.requestIds.delete(requestId);
-    }
-  }, JOB_RESULT_TTL_MS);
-  timer.unref?.();
-}
-
 function getGeminiFailure(error: unknown) {
   const providerStatus = getProviderStatus(error);
   const errorName = error instanceof Error ? error.name : "unknown";
@@ -159,200 +115,37 @@ function getGeminiFailure(error: unknown) {
   };
 }
 
-async function runBackgroundScriptJob(
-  jobId: string,
-  requestId: string,
-  prompt: string,
-  articleUrl: string,
-  apiKey: string,
+async function deleteGeminiInteraction(
+  client: GoogleGenAI,
+  interactionId: string,
+  cancel = false,
 ) {
-  const client = new GoogleGenAI({ apiKey });
-  let interactionId: string | undefined;
-  let cancelInteraction = false;
-  let timedOut = false;
   let cleanupWarning: string | undefined;
-  let job: ScriptJob = {
-    status: "failed",
-    error: "Gemini request failed.",
-    statusCode: 502,
-    createdAt: Date.now(),
-  };
 
-  try {
-    let interaction = await client.interactions.create({
-      model: MODEL,
-      input: prompt,
-      tools: articleUrl ? [{ type: "url_context" }] : undefined,
-      generation_config: {
-        thinking_level: "low",
-        max_output_tokens: 2_048,
-      },
-      background: true,
-      store: true,
-    });
-    interactionId = interaction.id;
-
-    const deadline = Date.now() + MAX_INTERACTION_WAIT_MS;
-    let pollConnectionFailures = 0;
-
-    while (interaction.status === "in_progress" || interaction.status === "queued") {
-      if (Date.now() >= deadline) {
-        cancelInteraction = true;
-        timedOut = true;
-        job = {
-          status: "failed",
-          error: "Gemini is taking longer than expected. The background task was stopped.",
-          statusCode: 504,
-          createdAt: Date.now(),
-        };
-        break;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-
-      try {
-        interaction = await client.interactions.get(interactionId);
-        pollConnectionFailures = 0;
-      } catch (pollError) {
-        const pollErrorName = pollError instanceof Error ? pollError.name : "unknown";
-        if (
-          pollErrorName === "APIConnectionError" &&
-          pollConnectionFailures < MAX_POLL_CONNECTION_RETRIES
-        ) {
-          pollConnectionFailures += 1;
-          console.warn("Gemini background status check lost connection; retrying", {
-            attempt: pollConnectionFailures,
-            transportCode: getTransportCode(pollError) ?? "unknown",
-          });
-          continue;
-        }
-
-        throw pollError;
-      }
-    }
-
-    if (timedOut) {
-      // The timeout result is already prepared above.
-    } else if (interaction.status !== "completed") {
-      const failureDetails = {
-        status: interaction.status,
-        errors: interaction.errors?.slice(0, 5).map(({ code, message }) => ({
-          code: code?.slice(0, 120) ?? "unknown",
-          message:
-            message
-              ?.replace(/AIza[0-9A-Za-z_-]{20,}/g, "[redacted]")
-              .slice(0, 300) ?? "unknown",
-        })) ?? [],
-      };
-      console.error(
-        `Gemini interaction did not complete ${JSON.stringify(failureDetails)}`,
-      );
-      const firstProviderError = failureDetails.errors[0];
-      const providerDiagnostic = firstProviderError
-        ? [
-            firstProviderError.code !== "unknown"
-              ? firstProviderError.code
-              : "",
-            firstProviderError.message !== "unknown"
-              ? firstProviderError.message
-              : "",
-          ]
-            .filter(Boolean)
-            .join(": ")
-        : "";
-      job = {
-        status: "failed",
-        error: providerDiagnostic
-          ? `Gemini interaction ended with status ${interaction.status}. ${providerDiagnostic}`
-          : `Gemini interaction ended with status ${interaction.status}. Try again.`,
-        statusCode: 502,
-        createdAt: Date.now(),
-      };
-    } else {
-      let canUseOutput = true;
-      if (articleUrl) {
-        const urlContextResult = interaction.steps?.find(
-          (step) => step.type === "url_context_result",
-        );
-        const articleWasRead = urlContextResult?.result.some(
-          (result) => result.status === "success",
-        );
-
-        if (!articleWasRead) {
-          job = {
-            status: "failed",
-            error: "Gemini couldn't read that article. Try a public page without a paywall, or paste the story details.",
-            statusCode: 422,
-            createdAt: Date.now(),
-          };
-          canUseOutput = false;
-        }
-      }
-
-      if (canUseOutput) {
-        const script = interaction.output_text?.trim();
-        if (!script) {
-          job = {
-            status: "failed",
-            error: "Gemini returned an empty script. Try again.",
-            statusCode: 502,
-            createdAt: Date.now(),
-          };
-        } else if (script.split(QUESTION_CLIP_MARKER).length !== 2) {
-          job = {
-            status: "failed",
-            error: "Gemini did not place the required question-clip cue correctly. Try generating the script again.",
-            statusCode: 502,
-            createdAt: Date.now(),
-          };
-        } else {
-          job = {
-            status: "completed",
-            script,
-            sourceUrl: articleUrl || null,
-            createdAt: Date.now(),
-          };
-        }
-      }
-    }
-  } catch (error) {
-    const failure = getGeminiFailure(error);
-    job = {
-      status: "failed",
-      error: failure.error,
-      statusCode: failure.statusCode,
-      createdAt: Date.now(),
-    };
-  }
-
-  if (interactionId) {
-    if (cancelInteraction) {
-      try {
-        await client.interactions.cancel(interactionId);
-      } catch (error) {
-        cleanupWarning = `Gemini could not confirm cancellation of interaction ${interactionId}; it may still be running. Check Google AI Studio.`;
-        console.error("Gemini background task cancellation failed", {
-          errorName: error instanceof Error ? error.name : "unknown",
-          transportCode: getTransportCode(error) ?? "unknown",
-        });
-      }
-    }
-
+  if (cancel) {
     try {
-      await client.interactions.delete(interactionId);
+      await client.interactions.cancel(interactionId);
     } catch (error) {
-      const deleteWarning = `Gemini could not delete temporary interaction ${interactionId}. It may remain in Google AI Studio; please delete it there.`;
-      cleanupWarning = cleanupWarning ? `${cleanupWarning} ${deleteWarning}` : deleteWarning;
-      console.error("Gemini temporary interaction deletion failed", {
+      cleanupWarning = "Gemini could not confirm cancellation; the interaction may still be running.";
+      console.error("Gemini interaction cancellation failed", {
         errorName: error instanceof Error ? error.name : "unknown",
         transportCode: getTransportCode(error) ?? "unknown",
       });
     }
   }
 
-  if (cleanupWarning) job = { ...job, cleanupWarning };
-  scriptJobStore.jobs.set(jobId, job);
-  scheduleJobCleanup(jobId, requestId);
+  try {
+    await client.interactions.delete(interactionId);
+  } catch (error) {
+    const deleteWarning = "Gemini could not delete the temporary interaction. It may remain in Google AI Studio; please delete it there.";
+    cleanupWarning = cleanupWarning ? `${cleanupWarning} ${deleteWarning}` : deleteWarning;
+    console.error("Gemini temporary interaction deletion failed", {
+      errorName: error instanceof Error ? error.name : "unknown",
+      transportCode: getTransportCode(error) ?? "unknown",
+    });
+  }
+
+  return cleanupWarning;
 }
 
 export async function POST(request: Request) {
@@ -372,10 +165,17 @@ export async function POST(request: Request) {
     return errorResponse("Send a JSON object with a story field.", 400);
   }
 
+  const requestId = typeof body.requestId === "string" ? body.requestId : "";
+  if (INTERACTION_ID_PATTERN.test(requestId)) {
+    return Response.json(
+      { jobId: requestId },
+      { status: 202, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
   const story = typeof body.story === "string" ? body.story.trim() : "";
   const headline = typeof body.headline === "string" ? body.headline.trim() : "";
   const articleUrl = typeof body.articleUrl === "string" ? body.articleUrl.trim() : "";
-  const requestId = typeof body.requestId === "string" ? body.requestId : "";
 
   if (!story && !articleUrl) {
     return errorResponse("Add story details or a public article link.", 400);
@@ -390,7 +190,7 @@ export async function POST(request: Request) {
   if (articleUrl && !isPublicHttpsUrl(articleUrl)) {
     return errorResponse("Use a full public HTTPS article link.", 400);
   }
-  if (!JOB_ID_PATTERN.test(requestId)) {
+  if (!REQUEST_ID_PATTERN.test(requestId)) {
     return errorResponse("Send a valid request ID.", 400);
   }
 
@@ -409,39 +209,58 @@ Article URL: ${articleUrl || "Not provided"}
 Pasted story details:
 ${story || "Not provided; read the article URL if one was supplied."}`;
 
-  const existingJobId = scriptJobStore.requestIds.get(requestId);
-  if (existingJobId && scriptJobStore.jobs.has(existingJobId)) {
+  try {
+    const interaction = await new GoogleGenAI({ apiKey }).interactions.create({
+      model: MODEL,
+      input: prompt,
+      tools: articleUrl ? [{ type: "url_context" }] : undefined,
+      generation_config: {
+        thinking_level: "low",
+        max_output_tokens: 2_048,
+      },
+      background: true,
+      store: true,
+    });
+
     return Response.json(
-      { jobId: existingJobId },
+      { jobId: interaction.id },
       { status: 202, headers: { "Cache-Control": "no-store" } },
     );
+  } catch (error) {
+    const failure = getGeminiFailure(error);
+    return errorResponse(failure.error, failure.statusCode);
   }
-
-  const jobId = randomUUID();
-  scriptJobStore.requestIds.set(requestId, jobId);
-  scriptJobStore.jobs.set(jobId, { status: "in_progress", createdAt: Date.now() });
-  void runBackgroundScriptJob(jobId, requestId, prompt, articleUrl, apiKey);
-
-  return Response.json(
-    { jobId },
-    { status: 202, headers: { "Cache-Control": "no-store" } },
-  );
 }
 
 export async function GET(request: Request) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return errorResponse("Gemini is not configured on the server.", 503);
+  }
+
   const jobId = new URL(request.url).searchParams.get("jobId") ?? "";
-  if (!JOB_ID_PATTERN.test(jobId)) {
+  if (!INTERACTION_ID_PATTERN.test(jobId)) {
     return errorResponse("Send a valid script job ID.", 400);
   }
 
-  const job = scriptJobStore.jobs.get(jobId);
-  if (!job) {
-    return errorResponse("This script job expired or is no longer available. Generate a new script.", 404);
+  const client = new GoogleGenAI({ apiKey });
+  let interaction;
+  try {
+    interaction = await client.interactions.get(jobId);
+  } catch (error) {
+    const failure = getGeminiFailure(error);
+    const providerStatus = getProviderStatus(error);
+    const terminal = providerStatus === 400 || providerStatus === 404 || providerStatus === 410;
+    const retryable = !terminal && providerStatus !== 401 && providerStatus !== 403;
+    return Response.json(
+      { error: failure.error, retryable, terminal },
+      { status: failure.statusCode, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
-  if (job.status === "in_progress") {
+  if (interaction.status === "in_progress" || interaction.status === "queued") {
     return Response.json(
-      { status: job.status },
+      { status: interaction.status },
       {
         status: 202,
         headers: { "Cache-Control": "no-store", "Retry-After": "5" },
@@ -449,19 +268,72 @@ export async function GET(request: Request) {
     );
   }
 
-  if (job.status === "failed") {
+  if (interaction.status !== "completed") {
+    const failureDetails = {
+      status: interaction.status,
+      errors: interaction.errors?.slice(0, 5).map(({ code, message }) => ({
+        code: code?.slice(0, 120) ?? "unknown",
+        message:
+          message
+            ?.replace(/AIza[0-9A-Za-z_-]{20,}/g, "[redacted]")
+            .slice(0, 300) ?? "unknown",
+      })) ?? [],
+    };
+    console.error(`Gemini interaction did not complete ${JSON.stringify(failureDetails)}`);
+    const firstProviderError = failureDetails.errors[0];
+    const providerDiagnostic = firstProviderError
+      ? [
+          firstProviderError.code !== "unknown" ? firstProviderError.code : "",
+          firstProviderError.message !== "unknown" ? firstProviderError.message : "",
+        ].filter(Boolean).join(": ")
+      : "";
+    const message = providerDiagnostic
+      ? `Gemini interaction ended with status ${interaction.status}. ${providerDiagnostic}`
+      : `Gemini interaction ended with status ${interaction.status}. Try again.`;
     return Response.json(
-      { error: job.error, cleanupWarning: job.cleanupWarning },
-      { status: job.statusCode, headers: { "Cache-Control": "no-store" } },
+      { error: message, terminal: true },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  const script = interaction.output_text?.trim();
+  if (!script) {
+    return Response.json(
+      { error: "Gemini returned an empty script. Try again.", terminal: true },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+  if (script.split(QUESTION_CLIP_MARKER).length !== 2) {
+    return Response.json(
+      {
+        error: "Gemini did not place the required question-clip cue correctly. Try generating the script again.",
+        terminal: true,
+      },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
     );
   }
 
   return Response.json(
-    {
-      script: job.script,
-      sourceUrl: job.sourceUrl,
-      cleanupWarning: job.cleanupWarning,
-    },
+    { script, sourceUrl: null },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+export async function DELETE(request: Request) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return errorResponse("Gemini is not configured on the server.", 503);
+  }
+
+  const jobId = new URL(request.url).searchParams.get("jobId") ?? "";
+  if (!INTERACTION_ID_PATTERN.test(jobId)) {
+    return errorResponse("Send a valid script job ID.", 400);
+  }
+
+  const cancel = new URL(request.url).searchParams.get("cancel") === "true";
+  const cleanupWarning = await deleteGeminiInteraction(new GoogleGenAI({ apiKey }), jobId, cancel);
+  return Response.json(
+    { cancelled: !cleanupWarning, cleanupWarning },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
