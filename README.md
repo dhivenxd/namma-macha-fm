@@ -10,7 +10,6 @@
 </p>
 
 ## The USP
-A short pitch [ https://github.com/dhivenxd/namma-macha-fm/blob/main/Short-sassy%20Pitch%20for%20the%20nerds! ]
 
 Most script generators stop at text. Namma Macha turns a local story into a complete Bengaluru FM bit: Gemini drafts the script, you get to review it, Gnani Timbre voices it, and the intro and iconic “What are you people doing?” reaction clip are woven into one continuous broadcast.
 
