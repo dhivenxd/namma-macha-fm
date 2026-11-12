@@ -1,0 +1,38 @@
+NAMMA MACHA FM 98.6
+
+The Internet Is Cooked. We're On Air.
+
+The Problem
+
+News consumption is everywhere, but most platforms deliver information without making it entertaining or engaging. India's internet culture is full of celebrity controversies, influencer drama, reality-show chaos and viral moments that audiences love discussing.
+
+Our Solution
+
+NAMMA MACHA FM 98.6 is an AI-powered entertainment radio station that transforms trending Indian news and internet stories into short, hilarious, Bengaluru-style radio broadcasts.
+
+Meet Namma Macha — our fictional AI radio jockey with an unhinged personality, dark humour, savage sarcasm and authentic local flavour.
+
+How It Works
+
+1. Curated news stories are collected with their original sources.
+2. Google Gemini analyses the context and generates witty, story-specific commentary while preserving factual accuracy.
+3. Gnani AI's Timbre converts the generated scripts into expressive spoken broadcasts.
+4. Users can listen, replay and share their favourite broadcasts.
+
+Technology Stack
+
+- Google Gemini API — AI script generation.
+- Gnani AI Timbre — text-to-speech.
+- Next.js, TypeScript and Tailwind CSS — web application.
+
+What Makes It Different?
+
+We aren't building another news aggregator or generic AI voice assistant. We're combining AI, regional humour and internet culture to create an entertainment-first audio experience with a distinct Bengaluru identity.
+
+Our Vision
+
+To make news and internet culture more engaging, shareable and entertaining through a uniquely Indian radio personality.
+
+NAMMA MACHA FM 98.6
+
+Real stories. Unfiltered commentary. Bengaluru attitude.
